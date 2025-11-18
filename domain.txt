@@ -1,0 +1,39 @@
+An insurance policy is a contract between the policyholder and the insurance company that outlines the terms of coverage, premium payments, and claim procedures. The policy document includes declarations, insuring agreements, conditions, and exclusions that define what is and is not covered under the contract.
+
+Underwriting is the process by which insurers evaluate the risk of insuring a potential policyholder. Underwriters analyze factors such as age, health status, occupation, lifestyle habits, and claims history to determine premium rates and coverage limits. The underwriting decision may result in standard rates, substandard rates with exclusions, or policy denial.
+
+A deductible is the amount the policyholder must pay out-of-pocket before the insurance coverage begins. For example, in a health insurance policy with a five hundred dollar deductible, the insured must pay the first five hundred dollars of covered expenses. Higher deductibles typically result in lower premium costs.
+
+Claims processing involves several steps including initial notification, documentation review, investigation, evaluation, and settlement. The claims adjuster examines the loss, verifies coverage under the policy terms, determines the extent of liability, and calculates the appropriate compensation amount based on policy limits and deductibles.
+
+Subrogation is the legal right that allows an insurance company to pursue a third party that caused an insurance loss to the insured. After paying a claim, the insurer may seek reimbursement from the party responsible for the loss. This process helps keep insurance costs lower by recovering funds from negligent parties.
+
+Property and casualty insurance covers damage to property and liability for injuries or damage caused to other people or their property. This category includes homeowners insurance, auto insurance, renters insurance, and umbrella liability policies. Each type provides specific protections against different risks and perils.
+
+Life insurance provides financial protection to beneficiaries upon the death of the insured. Term life insurance offers coverage for a specific period, while whole life insurance provides lifetime coverage with a cash value component. Universal life and variable life policies offer additional flexibility and investment options.
+
+The premium is the amount paid by the policyholder to maintain insurance coverage. Premiums can be paid monthly, quarterly, semi-annually, or annually. Factors affecting premium calculations include coverage amount, deductible level, risk factors, claims history, and geographic location.
+
+An insurance rider is an amendment to an insurance policy that modifies the terms, coverage, or benefits. Common riders include waiver of premium, accidental death benefit, guaranteed insurability, and long-term care riders. Riders typically require additional premium payments.
+
+Reinsurance is insurance that insurance companies purchase to protect themselves against catastrophic losses. Through reinsurance, the primary insurer transfers portions of risk portfolios to other insurers to reduce the likelihood of large payouts. This allows insurers to underwrite policies they might otherwise decline.
+
+The loss ratio is calculated by dividing incurred losses plus adjustment expenses by earned premiums. Insurance companies monitor loss ratios to assess profitability and pricing adequacy. A loss ratio above seventy percent may indicate that premiums are too low relative to claims costs.
+
+Actuarial science applies mathematical and statistical methods to assess risk in insurance and finance. Actuaries analyze mortality tables, accident statistics, and economic trends to calculate insurance premiums, reserves, and policy benefits. Their work ensures insurance companies remain financially solvent.
+
+A peril is a specific risk or cause of loss covered by an insurance policy, such as fire, theft, windstorm, or flood. Named peril policies only cover specifically listed perils, while open peril or all-risk policies cover all perils except those specifically excluded.
+
+Coinsurance is a cost-sharing arrangement where the policyholder pays a percentage of covered expenses after the deductible is met. For example, with eighty-twenty coinsurance, the insurer pays eighty percent and the insured pays twenty percent of covered costs up to the out-of-pocket maximum.
+
+Policy limits define the maximum amount an insurance company will pay for a covered loss. Limits can be per occurrence, per person, annual aggregate, or lifetime maximum. Choosing appropriate limits requires balancing premium costs against potential exposure to catastrophic losses.
+
+Exclusions are specific conditions or circumstances not covered by an insurance policy. Common exclusions include intentional acts, war, nuclear hazards, wear and tear, and pre-existing conditions. Understanding policy exclusions is critical to avoiding coverage gaps.
+
+The grace period is the additional time after the premium due date during which coverage remains in force without penalty. Typical grace periods range from ten to thirty-one days depending on the policy type and payment frequency. Policies may lapse if payment is not received by the end of the grace period.
+
+Liability insurance protects the insured against claims resulting from injuries and damage to other people or property. Coverage includes legal defense costs and settlements or judgments up to the policy limit. General liability, professional liability, and product liability are common types.
+
+Workers compensation insurance provides benefits to employees who suffer work-related injuries or illnesses. Coverage includes medical expenses, disability benefits, rehabilitation costs, and death benefits. Most states require employers to carry workers compensation insurance.
+
+Umbrella insurance provides additional liability coverage beyond the limits of underlying policies such as auto and homeowners insurance. Umbrella policies typically start at one million dollars in coverage and are relatively inexpensive compared to the protection they provide against catastrophic liability claims.
