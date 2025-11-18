@@ -16,7 +16,6 @@ import random
 from modules.config import MODEL_PATH, detect_hardware
 from modules.datasets import TextFileDataset, TokenizedDataset, SubsetDataset
 from modules.callbacks import (
-    StepLoggingCallback,
     SafeEarlyStoppingCallback,
     PlottingCallback,
     EnhancedEvalCallback
@@ -120,11 +119,15 @@ def create_train_test_split(dataset, train_ratio=0.9, seed=42):
 
 def create_training_args(batch_size, grad_accum, use_bf16, workers, 
                          gradient_checkpointing, steps_per_epoch):
-    """Create training arguments."""
+    """Create training arguments with optimized step frequencies."""
     
-    # Hybrid checkpointing
+    # More frequent evaluation and checkpointing for better monitoring
+    eval_steps = 50  # Changed from 200 - evaluate every 50 steps
     save_strategy = "steps"
-    save_steps = max(steps_per_epoch // 2, 500)
+    save_steps = 100  # Changed from 500 - save every 100 steps
+    
+    # Ensure save_steps is a multiple of eval_steps
+    save_steps = ((save_steps + eval_steps - 1) // eval_steps) * eval_steps
     save_total_limit = 3
     
     training_args = TrainingArguments(
@@ -145,7 +148,7 @@ def create_training_args(batch_size, grad_accum, use_bf16, workers,
         
         # Evaluation & checkpointing
         eval_strategy="steps",
-        eval_steps=200,
+        eval_steps=eval_steps,
         save_strategy=save_strategy,
         save_steps=save_steps,
         save_total_limit=save_total_limit,
@@ -263,8 +266,7 @@ def main():
         callbacks=[
             SafeEarlyStoppingCallback(min_steps=steps_per_epoch, patience=3),
             EnhancedEvalCallback(tokenizer, test_prompts),
-            StepLoggingCallback(),
-            PlottingCallback()
+            PlottingCallback()  # Removed StepLoggingCallback - using default logging
         ]
     )
     

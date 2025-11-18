@@ -202,11 +202,12 @@ class TokenizedDataset(TorchDataset):
         return len(self.tokenized_chunks)
     
     def __getitem__(self, idx):
+        """Return dict with lists (NOT tensors) for DataCollator to handle padding."""
         chunk = self.tokenized_chunks[idx]
         return {
-            "input_ids": torch.tensor(chunk["input_ids"], dtype=torch.long),
-            "attention_mask": torch.tensor(chunk["attention_mask"], dtype=torch.long),
-            "labels": torch.tensor(chunk["input_ids"], dtype=torch.long)  # For causal LM
+            "input_ids": chunk["input_ids"],  # Return list, not tensor
+            "attention_mask": chunk["attention_mask"],  # Return list, not tensor
+            "labels": chunk["input_ids"]  # Return list for causal LM
         }
 
 

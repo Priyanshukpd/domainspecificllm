@@ -1,4 +1,3 @@
-
 import torch
 from transformers import (
     AutoModelForCausalLM,
@@ -324,6 +323,8 @@ class TokenizedDataset(TorchDataset):
                         "input_ids": encoding["input_ids"],
                         "attention_mask": encoding["attention_mask"]
                     })
+
+
         
         # Statistics
         avg_chunks = len(self.tokenized_chunks) / len(text_dataset)
@@ -336,11 +337,12 @@ class TokenizedDataset(TorchDataset):
         return len(self.tokenized_chunks)
     
     def __getitem__(self, idx):
+        """Return dict with lists (NOT tensors) for DataCollator to handle padding."""
         chunk = self.tokenized_chunks[idx]
         return {
-            "input_ids": torch.tensor(chunk["input_ids"], dtype=torch.long),
-            "attention_mask": torch.tensor(chunk["attention_mask"], dtype=torch.long),
-            "labels": torch.tensor(chunk["input_ids"], dtype=torch.long)  # For causal LM
+            "input_ids": chunk["input_ids"],  # Return list, not tensor
+            "attention_mask": chunk["attention_mask"],  # Return list, not tensor
+            "labels": chunk["input_ids"]  # Return list for causal LM
         }
 
 print("Tokenizing dataset...")
@@ -360,10 +362,10 @@ print()
 examples_per_epoch = len(tokenized_dataset) * 0.9
 steps_per_epoch = int(examples_per_epoch / (batch_size * grad_accum))
 
-# Hybrid checkpointing - MUST be multiple of eval_steps for load_best_model_at_end
-eval_steps = 200
+# More frequent evaluation and checkpointing for better monitoring
+eval_steps = 50  # Changed from 200 - evaluate every 50 steps
 save_strategy = "steps"
-save_steps = max(steps_per_epoch // 2, 600)  # Start with 600 (multiple of 200)
+save_steps = 100  # Changed from 600 - save every 100 steps
 
 # Ensure save_steps is a multiple of eval_steps
 save_steps = ((save_steps + eval_steps - 1) // eval_steps) * eval_steps
@@ -437,11 +439,23 @@ from transformers import TrainerCallback
 import numpy as np
 
 class StepLoggingCallback(TrainerCallback):
-    """Prints training metrics every N steps in a clean format."""
+    """Prints training metrics every N steps in a clean format with timestamps."""
+    
+    def __init__(self):
+        from datetime import datetime
+        self.start_time = None
+        self.datetime = datetime
+    
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Record training start time."""
+        from datetime import datetime
+        self.start_time = datetime.now()
     
     def on_log(self, args, state, control, logs=None, **kwargs):
         """Called whenever logging happens (controlled by logging_steps)."""
         if logs and state.global_step > 0:
+            from datetime import datetime
+            
             # Extract relevant metrics
             loss = logs.get('loss')
             grad_norm = logs.get('grad_norm')
@@ -450,7 +464,20 @@ class StepLoggingCallback(TrainerCallback):
             
             # Only print if we have the core metrics
             if loss is not None:
-                output = f"Step {state.global_step:>5d} | "
+                # Calculate elapsed time
+                current_time = datetime.now()
+                if self.start_time:
+                    elapsed = current_time - self.start_time
+                    hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                else:
+                    time_str = "00:00:00"
+                
+                # Format current timestamp
+                timestamp = current_time.strftime("%Y-%m-%d %H:%M:%S")
+                
+                output = f"[{timestamp}] [{time_str}] Step {state.global_step:>5d} | "
                 output += f"Loss: {loss:.4f} | "
                 
                 if grad_norm is not None:

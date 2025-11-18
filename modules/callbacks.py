@@ -11,33 +11,9 @@ import json
 import torch
 
 
-class StepLoggingCallback(TrainerCallback):
-    """Prints training metrics every N steps in a clean format."""
-    
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        """Called whenever logging happens (controlled by logging_steps)."""
-        if logs and state.global_step > 0:
-            # Extract relevant metrics
-            loss = logs.get('loss')
-            grad_norm = logs.get('grad_norm')
-            learning_rate = logs.get('learning_rate')
-            epoch = logs.get('epoch')
-            
-            # Only print if we have the core metrics
-            if loss is not None:
-                output = f"Step {state.global_step:>5d} | "
-                output += f"Loss: {loss:.4f} | "
-                
-                if grad_norm is not None:
-                    output += f"Grad Norm: {grad_norm:.4f} | "
-                
-                if learning_rate is not None:
-                    output += f"LR: {learning_rate:.2e} | "
-                
-                if epoch is not None:
-                    output += f"Epoch: {epoch:.2f}"
-                
-                print(output)
+# StepLoggingCallback removed - Transformers' default logging already provides
+# loss, learning rate, and metrics. Using this callback causes duplicate output.
+# Default logging is controlled by logging_steps in TrainingArguments.
 
 
 class SafeEarlyStoppingCallback(TrainerCallback):

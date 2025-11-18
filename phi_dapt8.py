@@ -4,7 +4,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     TrainingArguments,
-    Trainer,
+    Trainer,  
     EarlyStoppingCallback,
     DataCollatorForLanguageModeling
 )
@@ -281,67 +281,48 @@ print()
 # ============================================================================
 
 class TokenizedDataset(TorchDataset):
-    """Tokenizes text on-the-fly with stride to prevent data loss."""
+    """SIMPLIFIED: Pre-tokenize everything, store as plain lists."""
     
     def __init__(self, text_dataset, tokenizer, max_length=512, stride=50):
-        self.text_dataset = text_dataset
         self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.stride = stride
+        self.chunks = []
         
-        # Pre-tokenize to create index (for proper length calculation)
-        print(f"  Pre-tokenizing {len(text_dataset)} examples (max_length={max_length}, stride={stride})...")
-        self.tokenized_chunks = []
+        print(f"  Tokenizing {len(text_dataset)} examples...")
         
         for idx in range(len(text_dataset)):
             if idx % 1000 == 0 and idx > 0:
-                print(f"    Processed {idx}/{len(text_dataset)} examples...")
+                print(f"    {idx}/{len(text_dataset)}...")
             
             text = text_dataset[idx]["text"]
             
-            # Tokenize with stride
-            encoding = tokenizer(
-                text,
-                truncation=True,
-                max_length=max_length,
-                stride=stride,
-                return_overflowing_tokens=True,
-                padding=False
-            )
+            # Simple tokenization - no fancy stuff
+            tokens = tokenizer.encode(text, add_special_tokens=True)
+            tokens = list(tokens)  # Force to plain Python list
             
-            # Store all chunks from this text
-            if "input_ids" in encoding:
-                if isinstance(encoding["input_ids"][0], list):
-                    # Multiple chunks
-                    for i in range(len(encoding["input_ids"])):
-                        self.tokenized_chunks.append({
-                            "input_ids": encoding["input_ids"][i],
-                            "attention_mask": encoding["attention_mask"][i]
-                        })
-                else:
-                    # Single chunk
-                    self.tokenized_chunks.append({
-                        "input_ids": encoding["input_ids"],
-                        "attention_mask": encoding["attention_mask"]
-                    })
+            # Split into chunks with stride
+            for i in range(0, len(tokens), max_length - stride):
+                chunk = list(tokens[i:i + max_length])  # Force to plain list
+                
+                if len(chunk) < 10:  # Skip tiny chunks
+                    continue
+                
+                self.chunks.append({
+                    "input_ids": chunk,
+                    "attention_mask": [1] * len(chunk)
+                })
         
-        # Statistics
-        avg_chunks = len(self.tokenized_chunks) / len(text_dataset)
-        print(f"  ✅ Tokenization complete:")
-        print(f"     Original texts: {len(text_dataset)}")
-        print(f"     Tokenized chunks: {len(self.tokenized_chunks)}")
-        print(f"     Average chunks per text: {avg_chunks:.2f}x")
+        print(f"  ✅ Created {len(self.chunks)} chunks from {len(text_dataset)} texts")
     
     def __len__(self):
-        return len(self.tokenized_chunks)
+        return len(self.chunks)
     
     def __getitem__(self, idx):
-        """Return dict with lists (NOT tensors) for DataCollator to handle padding."""
-        chunk = self.tokenized_chunks[idx]
+        chunk = self.chunks[idx]
+        # Return COPIES to avoid any reference issues
         return {
-            "input_ids": chunk["input_ids"],  # Return list, not tensor
-            "attention_mask": chunk["attention_mask"],  # Return list, not tensor
-            "labels": chunk["input_ids"]  # Return list for causal LM
+            "input_ids": list(chunk["input_ids"]),
+            "attention_mask": list(chunk["attention_mask"]),
+            "labels": list(chunk["input_ids"])
         }
 
 print("Tokenizing dataset...")
@@ -364,11 +345,11 @@ steps_per_epoch = int(examples_per_epoch / (batch_size * grad_accum))
 # More frequent evaluation and checkpointing for better monitoring
 eval_steps = 50  # Changed from 200 - evaluate every 50 steps
 save_strategy = "steps"
-save_steps = 100  # Changed from 500/600 - save every 100 steps
+save_steps = 100  # Changed from 600 - save every 100 steps
 
 # Ensure save_steps is a multiple of eval_steps
 save_steps = ((save_steps + eval_steps - 1) // eval_steps) * eval_steps
-save_total_limit = 3
+save_total_limit = 5  # Keep 5 checkpoints for safety (was 3)
 
 training_args = TrainingArguments(
     output_dir="./output",
@@ -399,7 +380,9 @@ training_args = TrainingArguments(
     # Optimization
     bf16=use_bf16,
     fp16=False,
-    dataloader_num_workers=0,  # MUST be 0 to prevent multiprocessing pickle corruption with list data
+    per_device_eval_batch_size=batch_size * 2,  # Larger batch for eval (no gradients needed)
+    eval_accumulation_steps=4,                   # Process eval in larger chunks (faster)
+    dataloader_num_workers=workers,
     gradient_checkpointing=gradient_checkpointing,  # Dynamic based on VRAM
     
     # Monitoring
@@ -428,6 +411,54 @@ print(f"   Total steps: ~{steps_per_epoch * 2}")
 print(f"   Checkpoint every: {save_steps} steps")
 print(f"   Eval every: {training_args.eval_steps} steps")
 print("="*70)
+print()
+
+# ============================================================================
+# SAVE TRAINING CONFIG FOR REPRODUCIBILITY
+# ============================================================================
+
+import json
+training_config = {
+    "model_path": MODEL_PATH,
+    "tokenization": {
+        "max_length": 1024,
+        "stride": 256,
+        "overlap_percentage": 25
+    },
+    "training": {
+        "batch_size": batch_size,
+        "gradient_accumulation": grad_accum,
+        "effective_batch_size": batch_size * grad_accum,
+        "learning_rate": training_args.learning_rate,
+        "warmup_ratio": training_args.warmup_ratio,
+        "lr_scheduler": training_args.lr_scheduler_type,
+        "epochs": training_args.num_train_epochs,
+        "max_grad_norm": training_args.max_grad_norm,
+        "weight_decay": training_args.weight_decay
+    },
+    "hardware": {
+        "device": device,
+        "precision": "bfloat16" if use_bf16 else "float32",
+        "gradient_checkpointing": gradient_checkpointing,
+        "dataloader_workers": workers
+    },
+    "data": {
+        "domain_weight": 0.8,
+        "general_weight": 0.2,
+        "shuffle_seed": 42
+    },
+    "monitoring": {
+        "eval_steps": training_args.eval_steps,
+        "save_steps": save_steps,
+        "logging_steps": training_args.logging_steps
+    }
+}
+
+os.makedirs("./output", exist_ok=True)
+config_path = "./output/training_config.json"
+with open(config_path, "w") as f:
+    json.dump(training_config, f, indent=2)
+print(f"Training config saved to: {config_path}")
 print()
 
 # ============================================================================
@@ -489,6 +520,81 @@ class StepLoggingCallback(TrainerCallback):
                     output += f"Epoch: {epoch:.2f}"
                 
                 print(output)
+
+class SafeEarlyStoppingCallback(TrainerCallback):
+    """
+    Early stopping that only activates after minimum training steps.
+    Prevents stopping before the model has seen the full dataset at least once.
+    """
+    
+    def __init__(self, min_steps=None, patience=3):
+        """
+        Args:
+            min_steps: Minimum steps before early stopping can trigger
+                      If None, will be calculated as steps_per_epoch (1 full epoch)
+            patience: Number of evaluations without improvement before stopping
+        """
+        self.min_steps = min_steps
+        self.patience = patience
+        self.patience_counter = 0
+        self.best_metric = None
+        self.best_step = None
+        self.early_stopping_triggered = False
+    
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Calculate minimum steps if not provided and display protection info."""
+        if self.min_steps is None:
+            # Calculate steps per epoch from training dataset
+            train_dataloader = kwargs.get('train_dataloader')
+            if train_dataloader:
+                steps_per_epoch = len(train_dataloader) // args.gradient_accumulation_steps
+                self.min_steps = steps_per_epoch
+            else:
+                # Fallback: use eval_steps as minimum
+                self.min_steps = args.eval_steps
+        
+        print(f"🛡️  Early Stopping Protection:")
+        print(f"   Minimum training steps: {self.min_steps} (≥1 full epoch)")
+        print(f"   Patience after minimum: {self.patience} evaluations")
+        print(f"   Early stopping will be active after step {self.min_steps}")
+        print()
+    
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        """Check if early stopping should trigger."""
+        if not metrics or 'eval_loss' not in metrics:
+            return
+        
+        current_step = state.global_step
+        current_metric = metrics['eval_loss']
+        
+        # SAFETY: Don't allow early stopping before minimum steps
+        if current_step < self.min_steps:
+            if self.best_metric is None or current_metric < self.best_metric:
+                self.best_metric = current_metric
+                self.best_step = current_step
+            print(f"   🛡️  Early stopping protected (step {current_step}/{self.min_steps})")
+            return
+        
+        # Standard early stopping logic (after minimum steps)
+        if self.best_metric is None or current_metric < self.best_metric:
+            self.best_metric = current_metric
+            self.best_step = current_step
+            self.patience_counter = 0
+            print(f"   ✅ New best! Validation loss: {current_metric:.4f}")
+        else:
+            self.patience_counter += 1
+            print(f"   ⚠️  No improvement for {self.patience_counter} eval(s). Patience: {self.patience_counter}/{self.patience}")
+            
+            if self.patience_counter >= self.patience:
+                print(f"\n{'='*70}")
+                print(f"🛑 EARLY STOPPING TRIGGERED at step {current_step}")
+                print(f"   Best validation loss: {self.best_metric:.4f} (step {self.best_step})")
+                print(f"   Current validation loss: {current_metric:.4f}")
+                print(f"   No improvement for {self.patience} consecutive evaluations")
+                print(f"   Loading best model from step {self.best_step}...")
+                print(f"{'='*70}\n")
+                control.should_training_stop = True
+                self.early_stopping_triggered = True
 
 class PlottingCallback(TrainerCallback):
     """Plots training metrics in real-time and saves figures."""
@@ -566,7 +672,7 @@ class PlottingCallback(TrainerCallback):
             
             ax1.set_xlabel('Steps', fontsize=11)
             ax1.set_ylabel('Loss', fontsize=11)
-            ax1.set_title('📉 Training vs Validation Loss', fontsize=12, fontweight='bold')
+            ax1.set_title('Training vs Validation Loss', fontsize=12, fontweight='bold')
             ax1.legend(loc='upper right')
             ax1.grid(True, alpha=0.3)
         else:
@@ -578,7 +684,7 @@ class PlottingCallback(TrainerCallback):
             ax2.plot(self.val_steps, self.perplexities, 'g-', label='Val Perplexity', linewidth=2, marker='s', markersize=4)
             ax2.set_xlabel('Steps', fontsize=11)
             ax2.set_ylabel('Perplexity', fontsize=11)
-            ax2.set_title('📊 Validation Perplexity', fontsize=12, fontweight='bold')
+            ax2.set_title('Validation Perplexity', fontsize=12, fontweight='bold')
             ax2.grid(True, alpha=0.3)
             
             # Add horizontal line for "good" perplexity threshold
@@ -594,7 +700,7 @@ class PlottingCallback(TrainerCallback):
             ax3.plot(self.train_steps, self.learning_rates, 'm-', label='Learning Rate', linewidth=2)
             ax3.set_xlabel('Steps', fontsize=11)
             ax3.set_ylabel('Learning Rate', fontsize=11)
-            ax3.set_title('📈 Learning Rate Schedule', fontsize=12, fontweight='bold')
+            ax3.set_title('Learning Rate Schedule', fontsize=12, fontweight='bold')
             ax3.legend(loc='upper right')
             ax3.grid(True, alpha=0.3)
             ax3.ticklabel_format(style='scientific', axis='y', scilimits=(0,0))
@@ -607,7 +713,7 @@ class PlottingCallback(TrainerCallback):
             ax4.plot(self.train_steps, self.grad_norms, 'c-', label='Gradient Norm', linewidth=2, alpha=0.7)
             ax4.set_xlabel('Steps', fontsize=11)
             ax4.set_ylabel('Gradient Norm', fontsize=11)
-            ax4.set_title('⚡ Gradient Norm (Stability)', fontsize=12, fontweight='bold')
+            ax4.set_title('Gradient Norm (Stability)', fontsize=12, fontweight='bold')
             ax4.grid(True, alpha=0.3)
             
             # Add warning line for gradient explosion
@@ -648,7 +754,7 @@ class PlottingCallback(TrainerCallback):
                     )
             ax1.set_xlabel('Steps', fontsize=11)
             ax1.set_ylabel('Loss', fontsize=11)
-            ax1.set_title('📉 Training vs Validation Loss', fontsize=12, fontweight='bold')
+            ax1.set_title('Training vs Validation Loss', fontsize=12, fontweight='bold')
             ax1.legend(loc='upper right')
             ax1.grid(True, alpha=0.3)
         
@@ -657,7 +763,7 @@ class PlottingCallback(TrainerCallback):
             ax2.plot(self.val_steps, self.perplexities, 'g-', label='Val Perplexity', linewidth=2, marker='s', markersize=4)
             ax2.set_xlabel('Steps', fontsize=11)
             ax2.set_ylabel('Perplexity', fontsize=11)
-            ax2.set_title('📊 Validation Perplexity', fontsize=12, fontweight='bold')
+            ax2.set_title('Validation Perplexity', fontsize=12, fontweight='bold')
             ax2.grid(True, alpha=0.3)
             good_threshold = 15.0
             ax2.axhline(y=good_threshold, color='r', linestyle='--', alpha=0.5, label=f'Target: <{good_threshold}')
@@ -668,7 +774,7 @@ class PlottingCallback(TrainerCallback):
             ax3.plot(self.train_steps, self.learning_rates, 'm-', label='Learning Rate', linewidth=2)
             ax3.set_xlabel('Steps', fontsize=11)
             ax3.set_ylabel('Learning Rate', fontsize=11)
-            ax3.set_title('📈 Learning Rate Schedule', fontsize=12, fontweight='bold')
+            ax3.set_title('Learning Rate Schedule', fontsize=12, fontweight='bold')
             ax3.legend(loc='upper right')
             ax3.grid(True, alpha=0.3)
             ax3.ticklabel_format(style='scientific', axis='y', scilimits=(0,0))
@@ -678,7 +784,7 @@ class PlottingCallback(TrainerCallback):
             ax4.plot(self.train_steps, self.grad_norms, 'c-', label='Gradient Norm', linewidth=2, alpha=0.7)
             ax4.set_xlabel('Steps', fontsize=11)
             ax4.set_ylabel('Gradient Norm', fontsize=11)
-            ax4.set_title('⚡ Gradient Norm (Stability)', fontsize=12, fontweight='bold')
+            ax4.set_title('Gradient Norm (Stability)', fontsize=12, fontweight='bold')
             ax4.grid(True, alpha=0.3)
             max_norm = 1.0
             ax4.axhline(y=max_norm, color='r', linestyle='--', alpha=0.5, label=f'Clip Threshold: {max_norm}')
@@ -688,7 +794,7 @@ class PlottingCallback(TrainerCallback):
         plt.savefig(latest_path, dpi=150, bbox_inches='tight')
         plt.close()
         
-        print(f"📊 Plots saved: {plot_path}")
+        print(f"Plots saved: {plot_path}")
     
     def on_train_end(self, args, state, control, **kwargs):
         """Generate final comprehensive plot and save metrics."""
@@ -727,8 +833,8 @@ class EnhancedEvalCallback(TrainerCallback):
             print(f"   Eval Loss: {metrics['eval_loss']:.4f}")
             print(f"   Perplexity: {perplexity:.2f}")
             
-            # Generate samples every 1000 steps
-            if state.global_step % 1000 == 0 and model is not None:
+            # Generate samples every 100 steps (was 1000 - now actually works with 336 total steps)
+            if state.global_step % 100 == 0 and model is not None:
                 print(f"\n📝 Sample Generations:")
                 print(f"{'-'*70}")
                 model.eval()
@@ -768,10 +874,57 @@ test_prompts = [
 # DATA COLLATOR (with dynamic padding)
 # ============================================================================
 
-data_collator = DataCollatorForLanguageModeling(
-    tokenizer=tokenizer,
-    mlm=False
-)
+# Create a simple wrapper for better compatibility across transformers versions
+class SimpleDataCollator:
+    """Simple data collator that works across all transformers versions."""
+    
+    def __init__(self, tokenizer, pad_to_multiple_of=None):
+        self.tokenizer = tokenizer
+        self.pad_to_multiple_of = pad_to_multiple_of
+    
+    def __call__(self, features):
+        # Find max length in batch
+        max_length = max(len(f["input_ids"]) for f in features)
+        
+        # Pad to multiple if specified
+        if self.pad_to_multiple_of is not None:
+            max_length = ((max_length + self.pad_to_multiple_of - 1) // self.pad_to_multiple_of) * self.pad_to_multiple_of
+        
+        # Pad each feature
+        batch = {
+            "input_ids": [],
+            "attention_mask": [],
+            "labels": []
+        }
+        
+        pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        
+        for f in features:
+            input_ids = list(f["input_ids"])
+            attention_mask = list(f["attention_mask"])
+            labels = list(f["labels"])
+            
+            # Calculate padding needed
+            padding_length = max_length - len(input_ids)
+            
+            # Pad input_ids and attention_mask
+            input_ids = input_ids + [pad_token_id] * padding_length
+            attention_mask = attention_mask + [0] * padding_length
+            labels = labels + [-100] * padding_length  # -100 is ignored in loss
+            
+            batch["input_ids"].append(input_ids)
+            batch["attention_mask"].append(attention_mask)
+            batch["labels"].append(labels)
+        
+        # Convert to tensors
+        import torch
+        return {
+            "input_ids": torch.tensor(batch["input_ids"], dtype=torch.long),
+            "attention_mask": torch.tensor(batch["attention_mask"], dtype=torch.long),
+            "labels": torch.tensor(batch["labels"], dtype=torch.long)
+        }
+
+data_collator = SimpleDataCollator(tokenizer=tokenizer)
 
 # ============================================================================
 # SPLIT DATASET & TRAIN
@@ -817,7 +970,7 @@ trainer = Trainer(
     eval_dataset=eval_dataset,
     data_collator=data_collator,
     callbacks=[
-        EarlyStoppingCallback(early_stopping_patience=3),
+        SafeEarlyStoppingCallback(min_steps=steps_per_epoch, patience=3),  # Safe early stopping
         EnhancedEvalCallback(tokenizer, test_prompts),
         StepLoggingCallback(),  # Log every 10 steps
         PlottingCallback()  # Generate training plots
