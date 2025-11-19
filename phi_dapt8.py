@@ -36,8 +36,8 @@ if torch.cuda.is_available():
     
     # Optimized for 1024 token sequences
     if vram_gb >= 70:  # A100 80GB, H100
-        batch_size = 2
-        grad_accum = 8
+        batch_size = 6  # Increased from 2 (Phi-3.5 is small, can handle this)
+        grad_accum = 4  # Reduced from 8 (don't need as much with larger batch)
         gradient_checkpointing = False  # Not needed with 80GB
         workers = 4
     elif vram_gb >= 40:  # A6000, A40
@@ -380,8 +380,8 @@ training_args = TrainingArguments(
     # Optimization
     bf16=use_bf16,
     fp16=False,
-    per_device_eval_batch_size=batch_size * 2,  # Larger batch for eval (no gradients needed)
-    eval_accumulation_steps=4,                   # Process eval in larger chunks (faster)
+    per_device_eval_batch_size=batch_size * 4,  # Much larger batch for eval (no gradients = more memory efficient)
+    eval_accumulation_steps=2,                   # Even faster eval with larger batches
     dataloader_num_workers=workers,
     gradient_checkpointing=gradient_checkpointing,  # Dynamic based on VRAM
     
@@ -404,6 +404,7 @@ print(f"   Precision: {'bfloat16' if use_bf16 else 'float32'}")
 print(f"   Per-device batch: {batch_size}")
 print(f"   Gradient accumulation: {grad_accum}")
 print(f"   Effective batch size: {batch_size * grad_accum}")
+print(f"   Eval batch size: {batch_size * 4} (per device, no gradients)")
 print(f"   Learning rate: {training_args.learning_rate}")
 print(f"   Epochs: {training_args.num_train_epochs}")
 print(f"   Steps per epoch: ~{steps_per_epoch}")
