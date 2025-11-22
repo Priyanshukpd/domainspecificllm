@@ -336,6 +336,7 @@ class StreamingTokenizedDataset(IterableDataset):
             current_idx += 1
         
         return samples
+        
     
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
         """
