@@ -42,7 +42,7 @@ NUM_EPOCHS = 3
 
 # ⭐ NEW: Large dataset config
 MAX_SAMPLES = None  # Set to limit (e.g., 1000000 for 1M samples), None = all
-CHUNK_SIZE = 10000  # Process in chunks of 10k to avoid memory spikes
+CHUNK_SIZE = 5000  # Process in chunks of 10k to avoid memory spikes
 CACHE_FILE = "./tokenized_cache.pt"  # Cache tokenized data
 
 
@@ -66,14 +66,14 @@ def detect_hardware() -> Dict[str, Any]:
             config = {
                 "device": "cuda",
                 "dtype": torch.bfloat16,
-                "batch_size": 1,              # Reduced due to long sequences
-                "grad_accum": 16,             # Increased to maintain effective batch=16
-                "gradient_checkpointing": True,  # Enable for long sequences
+                "batch_size": 2,              # Reduced due to long sequences
+                "grad_accum": 8,             # Increased to maintain effective batch=16
+                "gradient_checkpointing": False,  # Enable for long sequences
                 "num_workers": 4,
                 "use_bf16": True,
                 "use_fp16": False,
                 "learning_rate": 2e-4,        # Higher LR for GPU
-                "max_length": 6144,           # Increased for 17k char instructions (~4.25k tokens + overhead)
+                "max_length": 5120,           # Increased for 17k char instructions (~4.25k tokens + overhead)
                 "lora_r": 16,                 # Higher rank
                 "lora_alpha": 32,
             }
@@ -200,6 +200,45 @@ def detect_sample_format(sample: Dict) -> str:
         return "unknown"
 
 
+def format_list_output(output: Any) -> str:
+    """
+    Convert various output formats (string, list, dict) to properly formatted text.
+    Handles cases where output is a JSON list, string list, or nested structure.
+    """
+    if isinstance(output, str):
+        return output.strip()
+    
+    elif isinstance(output, list):
+        # Format list items with bullet points
+        formatted_items = []
+        for item in output:
+            if isinstance(item, dict):
+                # Handle dict items (e.g., {"point": "text"})
+                item_text = str(item.get("point", item.get("text", item)))
+                formatted_items.append(f"• {item_text}")
+            elif isinstance(item, (list, tuple)):
+                # Handle nested lists
+                formatted_items.append(f"• {' → '.join(str(x) for x in item)}")
+            else:
+                # Simple string/number items
+                formatted_items.append(f"• {str(item).strip()}")
+        return "\n".join(formatted_items) if formatted_items else ""
+    
+    elif isinstance(output, dict):
+        # Handle dict outputs (convert to readable format)
+        formatted_items = []
+        for key, value in output.items():
+            if isinstance(value, list):
+                formatted_items.append(f"{key}:\n" + "\n".join(f"  • {v}" for v in value))
+            else:
+                formatted_items.append(f"{key}: {value}")
+        return "\n".join(formatted_items) if formatted_items else ""
+    
+    else:
+        # Fallback for other types (int, float, None, etc.)
+        return str(output).strip() if output else ""
+
+
 def load_json_streamed(json_path: str, max_samples: Optional[int] = None) -> Iterator[Dict]:
     """
     ⭐ Generator that yields samples from JSON one by one.
@@ -324,7 +363,10 @@ class StreamingTokenizedDataset(IterableDataset):
                     # Instruction format: {"instruction": "...", "input": "...", "output": "..."}
                     instruction = sample.get('instruction', '')
                     input_text = sample.get('input', '')
-                    output = sample.get('output', '')
+                    output_raw = sample.get('output', '')
+                    
+                    # Handle list/dict outputs
+                    output = format_list_output(output_raw)
                     prompt = format_prompt(instruction, input_text)
                 else:
                     # Unknown format - skip
@@ -401,7 +443,10 @@ class TrainDataset(StreamingTokenizedDataset):
                 elif sample_format == "instruction":
                     instruction = sample.get('instruction', '')
                     input_text = sample.get('input', '')
-                    output = sample.get('output', '')
+                    output_raw = sample.get('output', '')
+                    
+                    # Handle list/dict outputs
+                    output = format_list_output(output_raw)
                     prompt = format_prompt(instruction, input_text)
                 else:
                     continue
@@ -461,7 +506,10 @@ class ValDataset(StreamingTokenizedDataset):
                 elif sample_format == "instruction":
                     instruction = sample.get('instruction', '')
                     input_text = sample.get('input', '')
-                    output = sample.get('output', '')
+                    output_raw = sample.get('output', '')
+                    
+                    # Handle list/dict outputs
+                    output = format_list_output(output_raw)
                     prompt = format_prompt(instruction, input_text)
                 else:
                     continue
@@ -816,6 +864,7 @@ def main() -> None:
         per_device_train_batch_size=hw_config["batch_size"],
         gradient_accumulation_steps=hw_config["grad_accum"],
         num_train_epochs=NUM_EPOCHS,
+        max_steps=steps_per_epoch * NUM_EPOCHS,  # Fix #1: Required for IterableDataset
 
         learning_rate=hw_config["learning_rate"],
         warmup_ratio=0.05,
@@ -836,9 +885,9 @@ def main() -> None:
         max_grad_norm=1.0,
         weight_decay=0.01,
 
-        group_by_length=True,
-        dataloader_pin_memory=hw_config["device"] == "cuda",
-        dataloader_num_workers=hw_config["num_workers"],
+        group_by_length=False,  # Fix #2: Must be False for IterableDataset
+        dataloader_pin_memory=False,  # Fix #3: Reduce memory usage
+        dataloader_num_workers=0,  # Fix #3: Prevent OOM with large datasets
         
         gradient_checkpointing=hw_config["gradient_checkpointing"],
         gradient_checkpointing_kwargs={"use_reentrant": False} if hw_config["gradient_checkpointing"] else None,
