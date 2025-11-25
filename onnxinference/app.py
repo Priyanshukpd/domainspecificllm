@@ -101,63 +101,75 @@ def build_messages_with_history(
     user_input: str,
     tokenizer: og.Tokenizer,
     max_tokens: int
-) -> str:
-    """Build messages in JSON format like model-chat.py - lets tokenizer handle formatting"""
+) -> tuple[str, int]:
+    """Build messages using apply_chat_template like model-chat.py.
     
-    # Build messages list in proper JSON format
-    messages_list = [{"role": "system", "content": system_prompt}]
+    Uses the EXACT same approach as model-chat.py for compatibility.
+    """
     
-    # Add all history
+    # Build messages array in JSON format (like model-chat.py)
+    messages = []
+    
+    # Add system prompt if not empty
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    
+    # Add conversation history
     for exchange in history:
-        messages_list.append({"role": "user", "content": exchange['user']})
-        messages_list.append({"role": "assistant", "content": exchange['assistant']})
+        messages.append({"role": "user", "content": exchange['user']})
+        messages.append({"role": "assistant", "content": exchange['assistant']})
     
     # Add current user input
-    messages_list.append({"role": "user", "content": user_input})
+    messages.append({"role": "user", "content": user_input})
     
     # Convert to JSON string
-    messages_json = json.dumps(messages_list)
+    messages_json = json.dumps(messages)
     
-    # Apply chat template (like model-chat.py does)
+    # Apply chat template (exact same as model-chat.py)
     try:
         prompt = tokenizer.apply_chat_template(messages=messages_json, add_generation_prompt=True)
-    except:
-        # Fallback to manual format if apply_chat_template fails
-        prompt = f"System: {system_prompt}\n\n"
-        for exchange in history:
-            prompt += f"User: {exchange['user']}\nAssistant: {exchange['assistant']}\n\n"
-        prompt += f"User: {user_input}\nAssistant: "
+    except Exception as e:
+        # Fallback if template fails
+        prompt = f"{user_input}\n"
     
     # Check token count
     prompt_tokens = len(tokenizer.encode(prompt))
     
-    if prompt_tokens < max_tokens - 100:
-        return prompt  # Fits fine
+    # Reserve space for response
+    min_response_space = 500
+    max_prompt_tokens = max_tokens - min_response_space
     
-    # Too long - trim oldest exchanges
-    while len(messages_list) > 2 and prompt_tokens > max_tokens - 100:  # Keep system + current user
-        # Remove oldest exchange (after system prompt)
-        if len(messages_list) > 2:
-            messages_list.pop(1)  # Remove oldest user message
-        if len(messages_list) > 2:
-            messages_list.pop(1)  # Remove oldest assistant message
+    if prompt_tokens < max_prompt_tokens:
+        return prompt, 0
+    
+    # Trim history if too long
+    original_history_count = len(history)
+    max_history = len(history)
+    
+    while max_history > 0 and prompt_tokens > max_prompt_tokens:
+        max_history -= 1
+        messages = []
         
-        messages_json = json.dumps(messages_list)
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        
+        # Keep only recent history
+        for exchange in history[-max_history:]:
+            messages.append({"role": "user", "content": exchange['user']})
+            messages.append({"role": "assistant", "content": exchange['assistant']})
+        
+        messages.append({"role": "user", "content": user_input})
+        
+        messages_json = json.dumps(messages)
         try:
             prompt = tokenizer.apply_chat_template(messages=messages_json, add_generation_prompt=True)
         except:
-            # Fallback
-            prompt = f"System: {system_prompt}\n\n"
-            for msg in messages_list[1:-1]:
-                if msg['role'] == 'user':
-                    prompt += f"User: {msg['content']}\n"
-                else:
-                    prompt += f"Assistant: {msg['content']}\n\n"
-            prompt += f"User: {messages_list[-1]['content']}\nAssistant: "
+            prompt = f"{user_input}\n"
         
         prompt_tokens = len(tokenizer.encode(prompt))
     
-    return prompt
+    exchanges_removed = original_history_count - max_history
+    return prompt, exchanges_removed
 
 def generate_response_stream(
     model: og.Model,
@@ -172,21 +184,30 @@ def generate_response_stream(
     try:
         # Check prompt size first
         prompt_tokens = len(tokenizer.encode(prompt))
+        
+        # Reserve at least 500 tokens for response generation (prevent cutoff)
+        min_response_tokens = 500
         available_tokens = max_tokens - prompt_tokens
         
-        if available_tokens < 50:
-            error_msg = f"ERROR: Prompt too long ({prompt_tokens} tokens). Increase 'Max Output Tokens' in settings (need at least {prompt_tokens + 100} tokens)."
+        if available_tokens < min_response_tokens:
+            error_msg = f"ERROR: Prompt too long ({prompt_tokens} tokens). Not enough space for response (need {min_response_tokens} tokens). Try clearing history or increase 'Max Output Tokens'."
             placeholder.markdown(error_msg)
             return error_msg, 0
         
+        # Calculate actual max_length: prompt + enough space for complete response
+        actual_max_length = prompt_tokens + max(available_tokens, min_response_tokens)
+        
         params = og.GeneratorParams(model)
         params.set_search_options(
-            max_length=max_tokens,
+            max_length=actual_max_length,  # Use calculated length instead of max_tokens
             temperature=temperature,
             top_p=top_p,
             do_sample=True,
             batch_size=1
         )
+        
+        # Note: EOS token stopping is handled automatically by the generator
+        # The model will stop when it generates the EOS token
         
         generator = og.Generator(model, params)
         input_tokens = tokenizer.encode(prompt)
@@ -266,11 +287,11 @@ def main():
         st.subheader("Generation Settings")
         max_output_tokens = st.slider(
             "Max Output Tokens",
-            min_value=500,
-            max_value=5000,
-            value=1000,
+            min_value=1000,
+            max_value=8000,
+            value=3000,
             step=500,
-            help="Total tokens including prompt. Needs to be larger than prompt length"
+            help="Total tokens including prompt + response. Increase if you get 'prompt too long' errors."
         )
         
         temperature = st.slider(
@@ -291,14 +312,14 @@ def main():
             help="Nucleus sampling parameter"
         )
         
-        # System Prompt
-        st.subheader("System Prompt")
-        system_prompt = st.text_area(
-            "System Prompt",
-            value=DEFAULT_SYSTEM_PROMPT,
-            height=100,
-            help="Instructions for the AI"
+        # System Prompt (disabled for fine-tuned model)
+        st.subheader("ℹ️ System Prompt")
+        st.info(
+            "**Note:** The fine-tuned model was trained WITHOUT system prompts. "
+            "System prompts are not used in this configuration."
         )
+        # Set to empty string (not used in fine-tuned model)
+        system_prompt = ""
         
         # Context Info
         st.subheader("📊 Context Info")
@@ -377,13 +398,21 @@ def main():
             start_time = time.time()
             
             # Build messages with FULL history (like model-chat.py)
-            prompt = build_messages_with_history(
+            prompt, trimmed_count = build_messages_with_history(
                 st.session_state.conversation_history,
                 system_prompt,
                 user_input,
                 st.session_state.tokenizer,
                 max_output_tokens
             )
+            
+            # Warn if history was trimmed for this request
+            if trimmed_count > 0:
+                st.warning(f"⚠️ Trimmed {trimmed_count} old exchange(s) from prompt to ensure complete response generation")
+            
+            # Debug: Show prompt format (remove this after testing)
+            with st.expander("🔍 Debug: View Prompt Format"):
+                st.code(prompt, language="text")
             
             # Create placeholder for streaming text
             message_placeholder = st.empty()
